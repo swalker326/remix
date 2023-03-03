@@ -32,7 +32,6 @@ describe("readConfig", () => {
           unstable_vanillaExtract: expect.any(Boolean),
           v2_errorBoundary: expect.any(Boolean),
           v2_meta: expect.any(Boolean),
-          v2_routeConvention: expect.any(Boolean),
         },
       },
       `
@@ -55,7 +54,6 @@ describe("readConfig", () => {
           "unstable_vanillaExtract": Any<Boolean>,
           "v2_errorBoundary": Any<Boolean>,
           "v2_meta": Any<Boolean>,
-          "v2_routeConvention": Any<Boolean>,
         },
         "mdx": undefined,
         "publicPath": "/build/",
