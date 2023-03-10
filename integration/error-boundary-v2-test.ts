@@ -13,10 +13,7 @@ test.describe("V2 Singular ErrorBoundary (future.v2_errorBoundary)", () => {
 
   test.beforeAll(async () => {
     fixture = await createFixture({
-      future: {
-        v2_errorBoundary: true,
-        v2_routeConvention: true,
-      },
+      future: { v2_errorBoundary: true },
       files: {
         "app/root.jsx": js`
           import { Links, Meta, Outlet, Scripts } from "@remix-run/react";

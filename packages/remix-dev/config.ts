@@ -658,8 +658,6 @@ let listFormat = new Intl.ListFormat("en", {
   type: "conjunction",
 });
 
-export let flatRoutesWarning = `⚠️ DEPRECATED: The old nested folders route convention has been deprecated in favor of "flat routes".  Please enable the new routing convention via the \`future.v2_routeConvention\` flag in your \`remix.config.js\` file.  For more information, please see https://remix.run/docs/en/main/file-conventions/route-files-v2.`;
-
 export const errorBoundaryWarning =
   "⚠️ DEPRECATED: The separation of `CatchBoundary` and `ErrorBoundary` has " +
   "been deprecated and Remix v2 will use a singular `ErrorBoundary` for " +

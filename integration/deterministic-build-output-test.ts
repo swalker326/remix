@@ -30,7 +30,6 @@ test("builds deterministically under different paths", async () => {
       unstable_cssSideEffectImports: true,
       unstable_postcss: true,
       unstable_vanillaExtract: true,
-      v2_routeConvention: true,
     },
     files: {
       "app/routes/_index.mdx": "# hello world",

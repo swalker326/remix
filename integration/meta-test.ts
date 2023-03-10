@@ -15,7 +15,6 @@ test.describe("meta", () => {
 
   test.beforeAll(async () => {
     fixture = await createFixture({
-      future: { v2_routeConvention: true },
       files: {
         "app/root.jsx": js`
           import { json } from "@remix-run/node";
@@ -401,10 +400,7 @@ test.describe("v2_meta", () => {
         "remix.config.js": js`
           module.exports = {
             ignoredRouteFiles: ["**/.*"],
-            future: {
-              v2_meta: true,
-              v2_routeConvention: true,
-            },
+            future: { v2_meta: true },
           };
         `,
 
