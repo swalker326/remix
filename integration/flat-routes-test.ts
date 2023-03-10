@@ -5,7 +5,6 @@ import { PlaywrightFixture } from "./helpers/playwright-fixture";
 import type { Fixture, AppFixture } from "./helpers/create-fixture";
 import { createFixtureProject } from "./helpers/create-fixture";
 import { createAppFixture, createFixture, js } from "./helpers/create-fixture";
-import { flatRoutesWarning } from "../packages/remix-dev/config";
 
 let fixture: Fixture;
 let appFixture: AppFixture;
