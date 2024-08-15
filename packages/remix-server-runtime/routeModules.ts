@@ -13,7 +13,7 @@ import type { LinkDescriptor } from "./links";
 import type { SerializeFrom } from "./serialize";
 
 export interface RouteModules<RouteModule> {
-  [routeId: string]: RouteModule;
+  [routeId: string]: RouteModule | undefined;
 }
 
 /**
@@ -224,6 +224,7 @@ export interface ServerRuntimeMetaArgs<
   params: Params;
   location: Location;
   matches: ServerRuntimeMetaMatches<MatchLoaders>;
+  error?: unknown;
 }
 
 export type ServerRuntimeMetaDescriptor =
@@ -253,6 +254,7 @@ export interface EntryRouteModule {
   clientLoader?: ClientLoaderFunction;
   ErrorBoundary?: any; // Weakly typed because server-runtime is not React-aware
   HydrateFallback?: any; // Weakly typed because server-runtime is not React-aware
+  Layout?: any; // Weakly typed because server-runtime is not React-aware
   default: any; // Weakly typed because server-runtime is not React-aware
   handle?: RouteHandle;
   links?: LinksFunction;

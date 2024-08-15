@@ -16,6 +16,42 @@ import { Link } from "@remix-run/react";
 
 ## Props
 
+### `to: string`
+
+The most basic usage takes an href string:
+
+```tsx
+<Link to="/some/path" />
+```
+
+### `to: Partial<Path>`
+
+You can also pass a `Partial<Path>` value:
+
+```tsx
+<Link
+  to={{
+    pathname: "/some/path",
+    search: "?query=string",
+    hash: "#hash",
+  }}
+/>
+```
+
+### `discover`
+
+Defines the route discovery behavior when using [`future.unstable_lazyRouteDiscovery`][lazy-route-discovery].
+
+```tsx
+<>
+  <Link /> {/* defaults to "render" */}
+  <Link discover="none" />
+</>
+```
+
+- **render** - default, discover the route when the link renders
+- **none** - don't eagerly discover, only discover if the link is clicked
+
 ### `prefetch`
 
 Defines the data and module prefetching behavior for the link.
@@ -200,3 +236,4 @@ Please note that this API is marked unstable and may be subject to breaking chan
 [document-start-view-transition]: https://developer.mozilla.org/en-US/docs/Web/API/Document/startViewTransition
 [use-view-transition-state]: ../hooks/use-view-transition-state
 [relativesplatpath]: ../hooks/use-resolved-path#splat-paths
+[lazy-route-discovery]: ../guides/lazy-route-discovery

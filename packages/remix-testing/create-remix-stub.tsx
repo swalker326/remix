@@ -106,6 +106,9 @@ export function createRemixStub(
         future: {
           v3_fetcherPersist: future?.v3_fetcherPersist === true,
           v3_relativeSplatPath: future?.v3_relativeSplatPath === true,
+          unstable_lazyRouteDiscovery:
+            future?.unstable_lazyRouteDiscovery === true,
+          unstable_singleFetch: future?.unstable_singleFetch === true,
         },
         manifest: {
           routes: {},
@@ -114,6 +117,7 @@ export function createRemixStub(
           version: "",
         },
         routeModules: {},
+        isSpaMode: false,
       };
 
       // Update the routes to include context in the loader/action and populate

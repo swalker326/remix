@@ -1,198 +1,269 @@
 import * as path from "node:path";
-import { test, expect } from "@playwright/test";
+import { expect } from "@playwright/test";
+import stripAnsi from "strip-ansi";
+import dedent from "dedent";
 
-import { createProject, grep, viteBuild } from "./helpers/vite.js";
+import type { Files } from "./helpers/vite.js";
+import {
+  test,
+  createProject,
+  grep,
+  viteBuild,
+  viteConfig,
+} from "./helpers/vite.js";
 
-let files = {
-  "app/utils.server.ts": String.raw`
-    export const dotServerFile = "SERVER_ONLY_FILE";
-    export default dotServerFile;
-  `,
-  "app/.server/utils.ts": String.raw`
-    export const dotServerDir = "SERVER_ONLY_DIR";
-    export default dotServerDir;
-  `,
-};
+let serverOnlyModule = `
+  export const serverOnly = "SERVER_ONLY";
+  export default serverOnly;
+`;
 
-test("Vite / .server file / named import in client fails with expected error", async () => {
-  let cwd = await createProject({
-    ...files,
-    "app/routes/fail-server-file-in-client.tsx": String.raw`
-      import { dotServerFile } from "~/utils.server";
-
-      export default function() {
-        console.log(dotServerFile);
-        return <h1>Fail: Server file included in client</h1>
-      }
-    `,
-  });
-  let client = viteBuild({ cwd })[0];
-  let stderr = client.stderr.toString("utf8");
-  expect(stderr).toMatch(
-    `"dotServerFile" is not exported by "app/utils.server.ts"`
-  );
-});
-
-test("Vite / .server file / namespace import in client fails with expected error", async () => {
-  let cwd = await createProject({
-    ...files,
-    "app/routes/fail-server-file-in-client.tsx": String.raw`
-      import * as utils from "~/utils.server";
-
-      export default function() {
-        console.log(utils.dotServerFile);
-        return <h1>Fail: Server file included in client</h1>
-      }
-    `,
-  });
-  let client = viteBuild({ cwd })[0];
-  let stderr = client.stderr.toString("utf8");
-  expect(stderr).toMatch(
-    `"dotServerFile" is not exported by "app/utils.server.ts"`
-  );
-});
-
-test("Vite / .server file / default import in client fails with expected error", async () => {
-  let cwd = await createProject({
-    ...files,
-    "app/routes/fail-server-file-in-client.tsx": String.raw`
-      import dotServerFile from "~/utils.server";
-
-      export default function() {
-        console.log(dotServerFile);
-        return <h1>Fail: Server file included in client</h1>
-      }
-    `,
-  });
-  let client = viteBuild({ cwd })[0];
-  let stderr = client.stderr.toString("utf8");
-  expect(stderr).toMatch(`"default" is not exported by "app/utils.server.ts"`);
-});
-
-test("Vite / .server dir / named import in client fails with expected error", async () => {
-  let cwd = await createProject({
-    ...files,
-    "app/routes/fail-server-dir-in-client.tsx": String.raw`
-      import { dotServerDir } from "~/.server/utils";
-
-      export default function() {
-        console.log(dotServerDir);
-        return <h1>Fail: Server directory included in client</h1>
-      }
-    `,
-  });
-  let client = viteBuild({ cwd })[0];
-  let stderr = client.stderr.toString("utf8");
-  expect(stderr).toMatch(
-    `"dotServerDir" is not exported by "app/.server/utils.ts"`
-  );
-});
-
-test("Vite / .server dir / namespace import in client fails with expected error", async () => {
-  let cwd = await createProject({
-    ...files,
-    "app/routes/fail-server-dir-in-client.tsx": String.raw`
-      import * as utils from "~/.server/utils";
-
-      export default function() {
-        console.log(utils.dotServerDir);
-        return <h1>Fail: Server directory included in client</h1>
-      }
-    `,
-  });
-  let client = viteBuild({ cwd })[0];
-  let stderr = client.stderr.toString("utf8");
-  expect(stderr).toMatch(
-    `"dotServerDir" is not exported by "app/.server/utils.ts"`
-  );
-});
-
-test("Vite / .server dir / default import in client fails with expected error", async () => {
-  let cwd = await createProject({
-    ...files,
-    "app/routes/fail-server-dir-in-client.tsx": String.raw`
-      import dotServerDir from "~/.server/utils";
-
-      export default function() {
-        console.log(dotServerDir);
-        return <h1>Fail: Server directory included in client</h1>
-      }
-    `,
-  });
-  let client = viteBuild({ cwd })[0];
-  let stderr = client.stderr.toString("utf8");
-  expect(stderr).toMatch(`"default" is not exported by "app/.server/utils.ts"`);
-});
-
-test("Vite / `handle` with dynamic imports as an escape hatch for server-only code", async () => {
-  let cwd = await createProject({
-    ...files,
-    "app/routes/handle-server-only.tsx": String.raw`
-      export const handle = {
-        // Sharp knife alert: you probably should avoid doing this, but you can!
-        serverOnlyEscapeHatch: async () => {
-          let { dotServerFile } = await import("~/utils.server");
-          let dotServerDir = await import("~/.server/utils");
-          return { dotServerFile, dotServerDir };
-        }
-      }
-
-      export default function() {
-        return <h1>This should work</h1>
-      }
-    `,
-  });
-  let [client, server] = viteBuild({ cwd });
-  expect(client.status).toBe(0);
-  expect(server.status).toBe(0);
-
-  let lines = grep(
-    path.join(cwd, "build/client"),
-    /SERVER_ONLY_FILE|SERVER_ONLY_DIR/
-  );
-  expect(lines).toHaveLength(0);
-});
+let tsconfig = (aliases: Record<string, string[]>) => `
+  {
+    "include": ["env.d.ts", "**/*.ts", "**/*.tsx"],
+    "compilerOptions": {
+      "lib": ["DOM", "DOM.Iterable", "ES2022"],
+      "isolatedModules": true,
+      "esModuleInterop": true,
+      "jsx": "react-jsx",
+      "module": "ESNext",
+      "moduleResolution": "Bundler",
+      "resolveJsonModule": true,
+      "target": "ES2022",
+      "strict": true,
+      "allowJs": true,
+      "forceConsistentCasingInFileNames": true,
+      "baseUrl": ".",
+      "paths": ${JSON.stringify(aliases)},
+      "noEmit": true
+    }
+  }
+`;
 
 test("Vite / dead-code elimination for server exports", async () => {
   let cwd = await createProject({
-    ...files,
-    "app/routes/remove-server-exports-and-dce.tsx": String.raw`
+    "app/utils.server.ts": serverOnlyModule,
+    "app/.server/utils.ts": serverOnlyModule,
+    "app/routes/remove-server-exports-and-dce.tsx": `
       import fs from "node:fs";
       import { json } from "@remix-run/node";
       import { useLoaderData } from "@remix-run/react";
 
-      import { dotServerFile } from "../utils.server";
-      import { dotServerDir } from "../.server/utils";
+      import { serverOnly as serverOnlyFile } from "../utils.server";
+      import { serverOnly as serverOnlyDir } from "../.server/utils";
 
       export const loader = () => {
-        let contents = fs.readFileSync("blah");
-        let data = dotServerFile + dotServerDir + serverOnly + contents;
-        return json({ data });
+        let contents = fs.readFileSync("server_only.txt");
+        return json({ serverOnlyFile, serverOnlyDir, contents })
       }
 
       export const action = () => {
-        console.log(dotServerFile, dotServerDir, serverOnly);
+        let contents = fs.readFileSync("server_only.txt");
+        console.log({ serverOnlyFile, serverOnlyDir, contents });
         return null;
       }
 
       export default function() {
         let { data } = useLoaderData<typeof loader>();
-        return (
-          <>
-            <h2>Index</h2>
-            <p>{data}</p>
-          </>
-        );
+        return <pre>{JSON.stringify(data)}</pre>;
       }
     `,
   });
-  let [client, server] = viteBuild({ cwd });
-  expect(client.status).toBe(0);
-  expect(server.status).toBe(0);
+  let { status } = viteBuild({ cwd });
+  expect(status).toBe(0);
 
   let lines = grep(
     path.join(cwd, "build/client"),
-    /SERVER_ONLY_FILE|SERVER_ONLY_DIR|node:fs/
+    /SERVER_ONLY|SERVER_ONLY|node:fs/
   );
   expect(lines).toHaveLength(0);
+});
+
+test.describe("Vite / route / server-only module referenced by client", () => {
+  let matrix = [
+    { type: "file", path: "app/utils.server.ts", specifier: `~/utils.server` },
+    { type: "dir", path: "app/.server/utils.ts", specifier: `~/.server/utils` },
+
+    {
+      type: "file alias",
+      path: "app/utils.server.ts",
+      specifier: `#dot-server-file`,
+    },
+    {
+      type: "dir alias",
+      path: "app/.server/utils.ts",
+      specifier: `#dot-server-dir/utils`,
+    },
+  ];
+
+  let cases = matrix.flatMap(({ type, path, specifier }) => [
+    {
+      name: `default import / .server ${type}`,
+      path,
+      specifier,
+      route: `
+        import serverOnly from "${specifier}";
+        export default () => <h1>{serverOnly}</h1>;
+      `,
+    },
+    {
+      name: `named import / .server ${type}`,
+      path,
+      specifier,
+      route: `
+        import { serverOnly } from "${specifier}"
+        export default () => <h1>{serverOnly}</h1>;
+      `,
+    },
+    {
+      name: `namespace import / .server ${type}`,
+      path,
+      specifier,
+      route: `
+        import * as utils from "${specifier}"
+        export default () => <h1>{utils.serverOnly}</h1>;
+      `,
+    },
+  ]);
+
+  for (let { name, path, specifier, route } of cases) {
+    test(name, async () => {
+      let cwd = await createProject({
+        "tsconfig.json": tsconfig({
+          "~/*": ["app/*"],
+          "#dot-server-file": ["app/utils.server.ts"],
+          "#dot-server-dir/*": ["app/.server/*"],
+        }),
+        [path]: serverOnlyModule,
+        "app/routes/_index.tsx": route,
+      });
+      let result = viteBuild({ cwd });
+      let stderr = result.stderr.toString("utf8");
+      [
+        "Server-only module referenced by client",
+
+        `    '${specifier}' imported by route 'app/routes/_index.tsx'`,
+
+        "  Remix automatically removes server-code from these exports:",
+        "    `loader`, `action`, `headers`",
+
+        `  But other route exports in 'app/routes/_index.tsx' depend on '${specifier}'.`,
+
+        "  See https://remix.run/docs/en/main/guides/vite#splitting-up-client-and-server-code",
+      ].forEach(expect(stderr).toMatch);
+    });
+  }
+});
+
+test.describe("Vite / non-route / server-only module referenced by client", () => {
+  let matrix = [
+    { type: "file", path: "app/utils.server.ts", specifier: `~/utils.server` },
+    { type: "dir", path: "app/.server/utils.ts", specifier: `~/.server/utils` },
+  ];
+
+  let cases = matrix.flatMap(({ type, path, specifier }) => [
+    {
+      name: `default import / .server ${type}`,
+      path,
+      specifier,
+      nonroute: `
+        import serverOnly from "${specifier}";
+        export const getServerOnly = () => serverOnly;
+      `,
+    },
+    {
+      name: `named import / .server ${type}`,
+      path,
+      specifier,
+      nonroute: `
+        import { serverOnly } from "${specifier}";
+        export const getServerOnly = () => serverOnly;
+      `,
+    },
+    {
+      name: `namespace import / .server ${type}`,
+      path,
+      specifier,
+      nonroute: `
+        import * as utils from "${specifier}";
+        export const getServerOnly = () => utils.serverOnly;
+      `,
+    },
+  ]);
+
+  for (let { name, path, specifier, nonroute } of cases) {
+    test(name, async () => {
+      let cwd = await createProject({
+        [path]: serverOnlyModule,
+        "app/reexport-server-only.ts": nonroute,
+        "app/routes/_index.tsx": `
+          import { serverOnly } from "~/reexport-server-only"
+          export default () => <h1>{serverOnly}</h1>;
+        `,
+      });
+      let result = viteBuild({ cwd });
+      let stderr = stripAnsi(result.stderr.toString("utf8"));
+
+      [
+        `Server-only module referenced by client`,
+
+        `    '${specifier}' imported by 'app/reexport-server-only.ts'`,
+
+        "  See https://remix.run/docs/en/main/guides/vite#splitting-up-client-and-server-code",
+      ].forEach(expect(stderr).toMatch);
+    });
+  }
+});
+
+test.describe("Vite / server-only escape hatch", async () => {
+  let files: Files = async ({ port }) => ({
+    "vite.config.ts": dedent`
+      import { vitePlugin as remix } from "@remix-run/dev";
+      import envOnly from "vite-env-only";
+      import tsconfigPaths from "vite-tsconfig-paths";
+
+      export default {
+        ${await viteConfig.server({ port })}
+        plugins: [remix(), envOnly(), tsconfigPaths()],
+      }
+    `,
+    "app/utils.server.ts": serverOnlyModule,
+    "app/.server/utils.ts": serverOnlyModule,
+    "app/routes/_index.tsx": `
+      import { serverOnly$ } from "vite-env-only";
+
+      import { serverOnly as serverOnlyFile } from "~/utils.server";
+      import serverOnlyDir from "~/.server/utils";
+
+      export const handle = {
+        escapeHatch: serverOnly$(async () => {
+          return { serverOnlyFile, serverOnlyDir };
+        })
+      }
+
+      export default () => <h1 data-title>This should work</h1>;
+    `,
+  });
+
+  test("vite dev", async ({ page, viteDev }) => {
+    let { port } = await viteDev(files);
+
+    await page.goto(`http://localhost:${port}/`, {
+      waitUntil: "networkidle",
+    });
+    await expect(page.locator("[data-title]")).toHaveText("This should work");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("vite build + remix-serve", async ({ page, viteRemixServe }) => {
+    let { port, cwd } = await viteRemixServe(files);
+
+    let lines = grep(path.join(cwd, "build/client"), /SERVER_ONLY/);
+    expect(lines).toHaveLength(0);
+
+    await page.goto(`http://localhost:${port}/`, {
+      waitUntil: "networkidle",
+    });
+    await expect(page.locator("[data-title]")).toHaveText("This should work");
+    expect(page.errors).toEqual([]);
+  });
 });

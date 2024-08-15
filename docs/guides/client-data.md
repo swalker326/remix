@@ -12,9 +12,9 @@ These new exports are a bit of a sharp knife and are not recommended as your _pr
 - **Fullstack State:** Augment server data with client data for your full set of loader data
 - **One or the Other:** Sometimes you use server loaders, sometimes you use client loaders, but not both on one route
 - **Client Cache:** Cache server loader data in the client and avoid some server calls
-- **Migration:** Ease your migration from React Router -> Remix SPA -> Remix SSR (once Remix supports [SPA mode][rfc-spa])
+- **Migration:** Ease your migration from React Router -> Remix SPA -> Remix SSR (once Remix supports [SPA Mode][rfc-spa])
 
-Please use these new exports with caution! If you're not careful - it's easy to get your UI out of sync. Remix out of the box tries _very_ hard to ensure that this doesn't happen - but once you take control over your own client-side cache, and potentially prevent Remix from performing it's normal server `fetch` calls - then Remix can no longer guarantee your UI remains in sync.
+Please use these new exports with caution! If you're not careful - it's easy to get your UI out of sync. Remix out of the box tries _very_ hard to ensure that this doesn't happen - but once you take control over your own client-side cache, and potentially prevent Remix from performing its normal server `fetch` calls - then Remix can no longer guarantee your UI remains in sync.
 
 ## Skip the Hop
 
@@ -103,7 +103,7 @@ You may want to mix and match data loading strategies in your application such t
 
 A route that only depends on a server loader looks like this:
 
-```tsx filename="app/routes/server-data-route.tsx
+```tsx filename=app/routes/server-data-route.tsx
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 
@@ -115,38 +115,32 @@ export async function loader({
 }
 
 export default function Component() {
-  const data = useLoaderData(); // server data
+  const data = useLoaderData(); // (1) - server data
   return <>...</>;
 }
 ```
 
 A route that only depends on a client loader looks like this.
 
-```tsx filename="app/routes/client-data-route.tsx
+```tsx filename=app/routes/client-data-route.tsx
 import type { ClientLoaderFunctionArgs } from "@remix-run/react";
 
 export async function clientLoader({
   request,
-  serverLoader,
 }: ClientLoaderFunctionArgs) {
-  const [serverData, clientData] = await Promise.all([
-    serverLoader(),
-    getClientData(request),
-  ]);
-  return {
-    ...serverData, // (4)
-    ...clientData, // (4)
-  };
+  const clientData = await getClientData(request);
+  return clientData;
 }
 // Note: you do not have to set this explicitly - it is implied if there is no `loader`
 clientLoader.hydrate = true;
 
+// (2)
 export function HydrateFallback() {
-  return <p>Skeleton rendered during SSR</p>; // (2)
+  return <p>Skeleton rendered during SSR</p>;
 }
 
 export default function Component() {
-  const data = useLoaderData(); // client data
+  const data = useLoaderData(); // (2) - client data
   return <>...</>;
 }
 ```
@@ -226,13 +220,13 @@ export async function clientAction({
 
 ## Migration
 
-We expect to write up a separate guide for migrations once [SPA mode][rfc-spa] lands, but for now we expect that the process will be something like:
+We expect to write up a separate guide for migrations once [SPA Mode][rfc-spa] lands, but for now we expect that the process will be something like:
 
 1. Introduce data patterns in your React Router SPA by moving to `createBrowserRouter`/`RouterProvider`
 2. Move your SPA to use Vite to better prepare for the Remix migration
 3. Incrementally move to file-based route definitions via the use of a Vite plugin (not yet provided)
-4. Migrate your React Router SPA to Remix SPA mode where all current file-based `loader` function act as `clientLoader`
-5. Opt out of Remix SPA mode (and into Remix SSR mode) and find/replace your `loader` functions to `clientLoader`
+4. Migrate your React Router SPA to Remix SPA Mode where all current file-based `loader` function act as `clientLoader`
+5. Opt out of Remix SPA Mode (and into Remix SSR mode) and find/replace your `loader` functions to `clientLoader`
    - You're now running an SSR app but all your data loading is still happening in the client via `clientLoader`
 6. Incrementally start moving `clientLoader -> loader` to start moving data loading to the server
 

@@ -1,16 +1,12 @@
-import {
-  createBrowserHistory,
-  createRouter,
-  type HydrationState,
-  type Router,
-} from "@remix-run/router";
+import type { HydrationState, Router } from "@remix-run/router";
+import { createBrowserHistory, createRouter } from "@remix-run/router";
 import type { ReactElement } from "react";
 import * as React from "react";
 import { UNSAFE_mapRouteProperties as mapRouteProperties } from "react-router";
 import { matchRoutes, RouterProvider } from "react-router-dom";
 
 import { RemixContext } from "./components";
-import type { EntryContext, FutureConfig } from "./entry";
+import type { AssetsManifest, FutureConfig } from "./entry";
 import { RemixErrorBoundary } from "./errorBoundaries";
 import { deserializeErrors } from "./errors";
 import type { RouteModules } from "./routeModules";
@@ -19,14 +15,24 @@ import {
   createClientRoutesWithHMRRevalidationOptOut,
   shouldHydrateRouteLoader,
 } from "./routes";
+import {
+  decodeViaTurboStream,
+  getSingleFetchDataStrategy,
+} from "./single-fetch";
+import invariant from "./invariant";
+import { initFogOfWar, useFogOFWarDiscovery } from "./fog-of-war";
 
 /* eslint-disable prefer-let/prefer-let */
 declare global {
   var __remixContext: {
     url: string;
+    basename?: string;
     state: HydrationState;
     criticalCss?: string;
     future: FutureConfig;
+    isSpaMode: boolean;
+    stream: ReadableStream<Uint8Array> | undefined;
+    streamController: ReadableStreamDefaultController<Uint8Array>;
     // The number of active deferred keys rendered on the server
     a?: number;
     dev?: {
@@ -36,9 +42,9 @@ declare global {
   };
   var __remixRouter: Router;
   var __remixRouteModules: RouteModules;
-  var __remixManifest: EntryContext["manifest"];
+  var __remixManifest: AssetsManifest;
   var __remixRevalidation: number | undefined;
-  var __remixClearCriticalCss: () => void;
+  var __remixClearCriticalCss: (() => void) | undefined;
   var $RefreshRuntime$: {
     performReactRefresh: () => void;
   };
@@ -47,12 +53,12 @@ declare global {
 
 export interface RemixBrowserProps {}
 
-declare global {
-  interface ImportMeta {
-    hot: any;
-  }
-}
-
+let stateDecodingPromise:
+  | (Promise<void> & {
+      value?: unknown;
+      error?: unknown;
+    })
+  | undefined;
 let router: Router;
 let routerInitialized = false;
 let hmrAbortController: AbortController | undefined;
@@ -70,18 +76,16 @@ let hmrRouterReadyPromise = new Promise<Router>((resolve) => {
   return undefined;
 });
 
-type CriticalCssReducer = () => typeof window.__remixContext.criticalCss;
-// The critical CSS can only be cleared, so the reducer always returns undefined
-let criticalCssReducer: CriticalCssReducer = () => undefined;
-
+// @ts-expect-error
 if (import.meta && import.meta.hot) {
+  // @ts-expect-error
   import.meta.hot.accept(
     "remix:manifest",
     async ({
       assetsManifest,
       needsRevalidation,
     }: {
-      assetsManifest: EntryContext["manifest"];
+      assetsManifest: AssetsManifest;
       needsRevalidation: Set<string>;
     }) => {
       let router = await hmrRouterReadyPromise;
@@ -155,7 +159,8 @@ if (import.meta && import.meta.hot) {
         assetsManifest.routes,
         window.__remixRouteModules,
         window.__remixContext.state,
-        window.__remixContext.future
+        window.__remixContext.future,
+        window.__remixContext.isSpaMode
       );
 
       // This is temporary API and will be more granular before release
@@ -198,7 +203,10 @@ export function RemixBrowser(_props: RemixBrowserProps): ReactElement {
     // towards determining the route matches.
     let initialPathname = window.__remixContext.url;
     let hydratedPathname = window.location.pathname;
-    if (initialPathname !== hydratedPathname) {
+    if (
+      initialPathname !== hydratedPathname &&
+      !window.__remixContext.isSpaMode
+    ) {
       let errorMsg =
         `Initial URL (${initialPathname}) does not match URL at time of hydration ` +
         `(${hydratedPathname}), reloading page...`;
@@ -209,68 +217,129 @@ export function RemixBrowser(_props: RemixBrowserProps): ReactElement {
       return <></>;
     }
 
+    // When single fetch is enabled, we need to suspend until the initial state
+    // snapshot is decoded into window.__remixContext.state
+    if (window.__remixContext.future.unstable_singleFetch) {
+      // Note: `stateDecodingPromise` is not coupled to `router` - we'll reach this
+      // code potentially many times waiting for our state to arrive, but we'll
+      // then only get past here and create the `router` one time
+      if (!stateDecodingPromise) {
+        let stream = window.__remixContext.stream;
+        invariant(stream, "No stream found for single fetch decoding");
+        window.__remixContext.stream = undefined;
+        stateDecodingPromise = decodeViaTurboStream(stream, window)
+          .then((value) => {
+            window.__remixContext.state =
+              value.value as typeof window.__remixContext.state;
+            stateDecodingPromise!.value = true;
+          })
+          .catch((e) => {
+            stateDecodingPromise!.error = e;
+          });
+      }
+      if (stateDecodingPromise.error) {
+        throw stateDecodingPromise.error;
+      }
+      if (!stateDecodingPromise.value) {
+        throw stateDecodingPromise;
+      }
+    }
+
     let routes = createClientRoutes(
       window.__remixManifest.routes,
       window.__remixRouteModules,
       window.__remixContext.state,
-      window.__remixContext.future
+      window.__remixContext.future,
+      window.__remixContext.isSpaMode
     );
 
-    // Create a shallow clone of `loaderData` we can mutate for partial hydration.
-    // When a route exports a `clientLoader` and a `HydrateFallback`, the SSR will
-    // render the fallback so we need the client to do the same for hydration.
-    // The server loader data has already been exposed to these route `clientLoader`'s
-    // in `createClientRoutes` above, so we need to clear out the version we pass to
-    // `createBrowserRouter` so it initializes and runs the client loaders.
-    let hydrationData = {
-      ...window.__remixContext.state,
-      loaderData: { ...window.__remixContext.state.loaderData },
-    };
-    let initialMatches = matchRoutes(routes, window.location);
-    if (initialMatches) {
-      for (let match of initialMatches) {
-        let routeId = match.route.id;
-        let route = window.__remixRouteModules[routeId];
-        let manifestRoute = window.__remixManifest.routes[routeId];
-        // Clear out the loaderData to avoid rendering the route component when the
-        // route opted into clientLoader hydration and either:
-        // * gave us a HydrateFallback
-        // * or doesn't have a server loader and we have no data to render
-        if (
-          route &&
-          shouldHydrateRouteLoader(manifestRoute, route) &&
-          (route.HydrateFallback || !manifestRoute.hasLoader)
-        ) {
-          hydrationData.loaderData[routeId] = undefined;
-        } else if (manifestRoute && !manifestRoute.hasLoader) {
-          // Since every Remix route gets a `loader` on the client side to load
-          // the route JS module, we need to add a `null` value to `loaderData`
-          // for any routes that don't have server loaders so our partial
-          // hydration logic doesn't kick off the route module loaders during
-          // hydration
-          hydrationData.loaderData[routeId] = null;
+    let hydrationData = undefined;
+    if (!window.__remixContext.isSpaMode) {
+      // Create a shallow clone of `loaderData` we can mutate for partial hydration.
+      // When a route exports a `clientLoader` and a `HydrateFallback`, the SSR will
+      // render the fallback so we need the client to do the same for hydration.
+      // The server loader data has already been exposed to these route `clientLoader`'s
+      // in `createClientRoutes` above, so we need to clear out the version we pass to
+      // `createBrowserRouter` so it initializes and runs the client loaders.
+      hydrationData = {
+        ...window.__remixContext.state,
+        loaderData: { ...window.__remixContext.state.loaderData },
+      };
+      let initialMatches = matchRoutes(
+        routes,
+        window.location,
+        window.__remixContext.basename
+      );
+      if (initialMatches) {
+        for (let match of initialMatches) {
+          let routeId = match.route.id;
+          let route = window.__remixRouteModules[routeId];
+          let manifestRoute = window.__remixManifest.routes[routeId];
+          // Clear out the loaderData to avoid rendering the route component when the
+          // route opted into clientLoader hydration and either:
+          // * gave us a HydrateFallback
+          // * or doesn't have a server loader and we have no data to render
+          if (
+            route &&
+            shouldHydrateRouteLoader(
+              manifestRoute,
+              route,
+              window.__remixContext.isSpaMode
+            ) &&
+            (route.HydrateFallback || !manifestRoute.hasLoader)
+          ) {
+            hydrationData.loaderData[routeId] = undefined;
+          } else if (manifestRoute && !manifestRoute.hasLoader) {
+            // Since every Remix route gets a `loader` on the client side to load
+            // the route JS module, we need to add a `null` value to `loaderData`
+            // for any routes that don't have server loaders so our partial
+            // hydration logic doesn't kick off the route module loaders during
+            // hydration
+            hydrationData.loaderData[routeId] = null;
+          }
         }
+      }
+
+      if (hydrationData && hydrationData.errors) {
+        hydrationData.errors = deserializeErrors(hydrationData.errors);
       }
     }
 
-    if (hydrationData && hydrationData.errors) {
-      hydrationData.errors = deserializeErrors(hydrationData.errors);
-    }
+    let { enabled: isFogOfWarEnabled, patchRoutesOnMiss } = initFogOfWar(
+      window.__remixManifest,
+      window.__remixRouteModules,
+      window.__remixContext.future,
+      window.__remixContext.isSpaMode,
+      window.__remixContext.basename
+    );
 
     // We don't use createBrowserRouter here because we need fine-grained control
     // over initialization to support synchronous `clientLoader` flows.
     router = createRouter({
       routes,
       history: createBrowserHistory(),
+      basename: window.__remixContext.basename,
       future: {
         v7_normalizeFormMethod: true,
         v7_fetcherPersist: window.__remixContext.future.v3_fetcherPersist,
         v7_partialHydration: true,
         v7_prependBasename: true,
         v7_relativeSplatPath: window.__remixContext.future.v3_relativeSplatPath,
+        // Single fetch enables this underlying behavior
+        v7_skipActionErrorRevalidation:
+          window.__remixContext.future.unstable_singleFetch === true,
       },
       hydrationData,
       mapRouteProperties,
+      unstable_dataStrategy: window.__remixContext.future.unstable_singleFetch
+        ? getSingleFetchDataStrategy(
+            window.__remixManifest,
+            window.__remixRouteModules
+          )
+        : undefined,
+      ...(isFogOfWarEnabled
+        ? { unstable_patchRoutesOnMiss: patchRoutesOnMiss }
+        : {}),
     });
 
     // We can call initialize() immediately if the router doesn't have any
@@ -294,11 +363,14 @@ export function RemixBrowser(_props: RemixBrowserProps): ReactElement {
   // removed from a component, but the styles will still be present in the
   // server HTML. This allows our HMR logic to clear the critical CSS state.
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  let [criticalCss, clearCriticalCss] = React.useReducer(
-    criticalCssReducer,
-    window.__remixContext.criticalCss
+  let [criticalCss, setCriticalCss] = React.useState(
+    process.env.NODE_ENV === "development"
+      ? window.__remixContext.criticalCss
+      : undefined
   );
-  window.__remixClearCriticalCss = clearCriticalCss;
+  if (process.env.NODE_ENV === "development") {
+    window.__remixClearCriticalCss = () => setCriticalCss(undefined);
+  }
 
   // This is due to the short circuit return above when the pathname doesn't
   // match and we force a hard reload.  This is an exceptional scenario in which
@@ -325,26 +397,45 @@ export function RemixBrowser(_props: RemixBrowserProps): ReactElement {
     });
   }, [location]);
 
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useFogOFWarDiscovery(
+    router,
+    window.__remixManifest,
+    window.__remixRouteModules,
+    window.__remixContext.future,
+    window.__remixContext.isSpaMode
+  );
+
   // We need to include a wrapper RemixErrorBoundary here in case the root error
   // boundary also throws and we need to bubble up outside of the router entirely.
   // Then we need a stateful location here so the user can back-button navigate
   // out of there
   return (
-    <RemixContext.Provider
-      value={{
-        manifest: window.__remixManifest,
-        routeModules: window.__remixRouteModules,
-        future: window.__remixContext.future,
-        criticalCss,
-      }}
-    >
-      <RemixErrorBoundary location={location}>
-        <RouterProvider
-          router={router}
-          fallbackElement={null}
-          future={{ v7_startTransition: true }}
-        />
-      </RemixErrorBoundary>
-    </RemixContext.Provider>
+    // This fragment is important to ensure we match the <RemixServer> JSX
+    // structure so that useId values hydrate correctly
+    <>
+      <RemixContext.Provider
+        value={{
+          manifest: window.__remixManifest,
+          routeModules: window.__remixRouteModules,
+          future: window.__remixContext.future,
+          criticalCss,
+          isSpaMode: window.__remixContext.isSpaMode,
+        }}
+      >
+        <RemixErrorBoundary location={location}>
+          <RouterProvider
+            router={router}
+            fallbackElement={null}
+            future={{ v7_startTransition: true }}
+          />
+        </RemixErrorBoundary>
+      </RemixContext.Provider>
+      {/*
+        This fragment is important to ensure we match the <RemixServer> JSX
+        structure so that useId values hydrate correctly
+      */}
+      {window.__remixContext.future.unstable_singleFetch ? <></> : null}
+    </>
   );
 }

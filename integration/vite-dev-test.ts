@@ -3,7 +3,6 @@ import type { Readable } from "node:stream";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import resolveBin from "resolve-bin";
 import getPort from "get-port";
 import waitOn from "wait-on";
 
@@ -26,7 +25,7 @@ test.describe("Vite dev", () => {
         `,
         "vite.config.ts": js`
           import { defineConfig } from "vite";
-          import { unstable_vitePlugin as remix } from "@remix-run/dev";
+          import { vitePlugin as remix } from "@remix-run/dev";
           import mdx from "@mdx-js/rollup";
 
           export default defineConfig({
@@ -35,13 +34,13 @@ test.describe("Vite dev", () => {
               strictPort: true,
             },
             plugins: [
-              remix(),
               mdx(),
+              remix(),
             ],
           });
         `,
         "app/root.tsx": js`
-          import { Links, Meta, Outlet, Scripts, LiveReload } from "@remix-run/react";
+          import { Links, Meta, Outlet, Scripts } from "@remix-run/react";
 
           export default function Root() {
             return (
@@ -56,7 +55,6 @@ test.describe("Vite dev", () => {
                     <Outlet />
                   </div>
                   <Scripts />
-                  <LiveReload nonce="1234" />
                 </body>
               </html>
             );
@@ -264,8 +262,8 @@ test.describe("Vite dev", () => {
     });
 
     let nodeBin = process.argv[0];
-    let viteBin = resolveBin.sync("vite");
-    devProc = spawn(nodeBin, [viteBin, "dev"], {
+    let remixBin = "node_modules/@remix-run/dev/dist/cli.js";
+    devProc = spawn(nodeBin, [remixBin, "vite:dev"], {
       cwd: projectDir,
       env: process.env,
       stdio: "pipe",
@@ -330,9 +328,6 @@ test.describe("Vite dev", () => {
     await page.waitForLoadState("networkidle");
     await expect(hmrStatus).toHaveText("HMR updated: yes");
     await expect(input).toHaveValue("stateful");
-
-    // check LiveReload script has nonce
-    await expect(page.locator(`script[nonce="1234"]`)).toBeAttached();
 
     // Ensure no errors after HMR
     expect(pageErrors).toEqual([]);

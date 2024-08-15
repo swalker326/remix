@@ -70,21 +70,40 @@ The `formData` can be multiple types:
 
 - [`FormData`][form_data] - A `FormData` instance.
 - [`HTMLFormElement`][html_form_element] - A [`<form>`][form_element] DOM element.
-- `Object` - An object of key/value pairs that will be converted to a `FormData` instance.
+- `Object` - An object of key/value pairs that will be converted to a `FormData` instance by default. You can pass a more complex object and serialize it as JSON by specifying `encType: "application/json"`. See [`useSubmit`][use-submit] for more details.
 
 If the method is `GET`, then the route [`loader`][loader] is being called and with the `formData` serialized to the url as [`URLSearchParams`][url_search_params]. If `DELETE`, `PATCH`, `POST`, or `PUT`, then the route [`action`][action] is being called with `formData` as the body.
 
 ```tsx
+// Submit a FormData instance (GET request)
+const formData = new FormData();
+fetcher.submit(formData);
+
+// Submit the HTML form element
 fetcher.submit(event.currentTarget.form, {
   method: "POST",
 });
 
+// Submit key/value JSON as a FormData instance
 fetcher.submit(
   { serialized: "values" },
   { method: "POST" }
 );
 
-fetcher.submit(formData);
+// Submit raw JSON
+fetcher.submit(
+  {
+    deeply: {
+      nested: {
+        json: "values",
+      },
+    },
+  },
+  {
+    method: "POST",
+    encType: "application/json",
+  }
+);
 ```
 
 `fetcher.submit` is a wrapper around a [`useSubmit`][use-submit] call for the fetcher instance, so it also accepts the same options as `useSubmit`.
@@ -97,6 +116,8 @@ Loads data from a route loader. While multiple nested routes can match a URL, on
 fetcher.load("/some/route");
 fetcher.load("/some/route?foo=bar");
 ```
+
+`fetcher.load`'s revalidate by default after action submissions and explicit revalidation requests via [`useRevalidator`][userevalidator]. Because `fetcher.load` loads a specific URL they don't revalidate on changes to route param or URL search param. You can use [`shouldRevalidate`][shouldrevalidate] to optimize which data should be reloaded.
 
 #### `options.unstable_flushSync`
 
@@ -157,3 +178,5 @@ The form method of the submission.
 [flush-sync]: https://react.dev/reference/react-dom/flushSync
 [start-transition]: https://react.dev/reference/react/startTransition
 [use-submit]: ./use-submit
+[userevalidator]: ./use-revalidator
+[shouldrevalidate]: ../route/should-revalidate#shouldrevalidate
